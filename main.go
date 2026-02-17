@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Mugema/Chirpy/internal/auth"
 	"github.com/Mugema/Chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -19,6 +20,7 @@ import _ "github.com/lib/pq"
 type apiConfig struct {
 	fileServerHits atomic.Int32
 	db             *database.Queries
+	secret         string
 }
 
 func main() {
@@ -34,16 +36,19 @@ func main() {
 	server.Addr = ":8080"
 	server.Handler = router
 
-	apiCfg := apiConfig{db: dbQueries}
+	apiCfg := apiConfig{db: dbQueries, secret: os.Getenv("secret")}
 
 	router.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	router.HandleFunc("GET /api/healthz/", handleHealth)
 	router.HandleFunc("GET /admin/metrics", apiCfg.handlerNumberRequests)
-	router.HandleFunc("POST /admin/reset", apiCfg.handlerReset)
-	router.HandleFunc("POST /api/users", apiCfg.handlerUsers)
-	router.HandleFunc("POST /api/chirps", apiCfg.handlerChirp)
 	router.HandleFunc("GET /api/chirps", apiCfg.handlerGetChirps)
 	router.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handlerGetChirpByID)
+	router.HandleFunc("/admin/reset", apiCfg.handlerReset)
+	router.HandleFunc("POST /api/users", apiCfg.handlerUsers)
+	router.HandleFunc("POST /api/chirps", apiCfg.handlerChirp)
+	router.HandleFunc("POST /api/login", apiCfg.handlerLogin)
+	router.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
+	router.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
 
 	err := server.ListenAndServe()
 	if err != nil {
@@ -105,12 +110,15 @@ func (cfg *apiConfig) handlerNumberRequests(writer http.ResponseWriter, req *htt
 }
 
 func (cfg *apiConfig) handlerReset(writer http.ResponseWriter, req *http.Request) {
-	cfg.fileServerHits.Store(0)
+	cfg.db.Reset(req.Context())
+
+	writer.Write([]byte("Database reset"))
 }
 
 func (cfg *apiConfig) handlerUsers(writer http.ResponseWriter, req *http.Request) {
 	type resp struct {
-		Email string `json:"email"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	user1 := resp{}
@@ -122,13 +130,21 @@ func (cfg *apiConfig) handlerUsers(writer http.ResponseWriter, req *http.Request
 		return
 	}
 
+	hashString, err := auth.HashPassword(user1.Password)
+	if err != nil {
+		fmt.Println("Error hashing password")
+		return
+	}
+	fmt.Println(hashString)
+
 	user, err := cfg.db.CreateUser(
 		req.Context(),
 		database.CreateUserParams{
 			ID:        uuid.New(),
-			CreatedAt: time.Now().UTC(),
-			UpdatedAt: time.Now().UTC(),
-			Email:     user1.Email})
+			CreatedAt: time.Now().Local(),
+			UpdatedAt: time.Now().Local(),
+			Email:     user1.Email,
+			Password:  hashString})
 
 	if err != nil {
 		fmt.Println("Error creating user")
@@ -188,13 +204,30 @@ func (cfg *apiConfig) handlerGetChirps(writer http.ResponseWriter, req *http.Req
 func (cfg *apiConfig) handlerChirp(writer http.ResponseWriter, req *http.Request) {
 	type request struct {
 		Body string `json:"body"`
-		Id   string `json:"user_id"`
 	}
 	reqChirp := request{}
 
-	decoder := json.NewDecoder(req.Body)
-	err := decoder.Decode(&reqChirp)
+	token, err := auth.GetBearerToken(req.Header)
 
+	if err != nil {
+		fmt.Printf("No token provided in header. Error: %v", err)
+		writer.WriteHeader(401)
+		return
+	} else if token == "" {
+		fmt.Printf("No token provided %v", err)
+		writer.WriteHeader(401)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(token, cfg.secret)
+	if err != nil {
+		fmt.Printf("token:%v \n error: %v\n", token, err)
+		writer.WriteHeader(401)
+		return
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	err = decoder.Decode(&reqChirp)
 	if err != nil {
 		fmt.Println("Error decoding")
 		return
@@ -212,33 +245,18 @@ func (cfg *apiConfig) handlerChirp(writer http.ResponseWriter, req *http.Request
 		return
 	}
 
-	userID, err := uuid.Parse(reqChirp.Id)
-
 	createChirp, err := cfg.db.CreateChirp(req.Context(),
 		database.CreateChirpParams{
 			ID:        uuid.New(),
 			UserID:    userID,
-			CreatedAt: time.Now().UTC(),
-			UpdatedAt: time.Now().UTC(),
+			CreatedAt: time.Now().Local(),
+			UpdatedAt: time.Now().Local(),
 			Body:      reqChirp.Body,
 		})
 	if err != nil {
-		fmt.Println("Error creating chirp")
+		fmt.Printf("Error creating chirp %v", err)
 		return
 	}
-
-	//profaneWords := []string{"kerfuffle", "sharbert", "fornax"}
-	//chirp := strings.Split(reqChirp.Body, " ")
-	//
-	//for index, word := range chirp {
-	//	for _, profane := range profaneWords {
-	//		if strings.ToLower(word) == profane {
-	//			chirp[index] = "****"
-	//		}
-	//	}
-	//}
-
-	//validResponse := validResp{strings.Join(chirp, " ")}
 
 	data, _ := json.Marshal(chirpMapper(createChirp))
 
