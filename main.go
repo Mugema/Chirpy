@@ -49,6 +49,8 @@ func main() {
 	router.HandleFunc("POST /api/login", apiCfg.handlerLogin)
 	router.HandleFunc("POST /api/refresh", apiCfg.handlerRefresh)
 	router.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
+	router.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)
+	router.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp)
 
 	err := server.ListenAndServe()
 	if err != nil {
