@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -182,7 +183,21 @@ func jsonUserMapper(u database.User) User {
 }
 
 func (cfg *apiConfig) handlerGetChirps(writer http.ResponseWriter, req *http.Request) {
-	c, err := cfg.db.GetChirps(req.Context())
+	var c []database.Chirp
+	var err error
+
+	queryParameter := req.URL.Query().Get("author_id")
+	sortOrder := req.URL.Query().Get("sort")
+
+	if queryParameter == "" {
+		c, err = cfg.db.GetChirps(req.Context())
+	} else {
+		id, err := uuid.Parse(queryParameter)
+		if err != nil {
+			return
+		}
+		c, err = cfg.db.GetChirpByUserId(req.Context(), id)
+	}
 	if err != nil {
 		fmt.Println("Error retrieving Chirps")
 		return
@@ -191,7 +206,10 @@ func (cfg *apiConfig) handlerGetChirps(writer http.ResponseWriter, req *http.Req
 	chirps := make([]Chirp, 0)
 	for _, chirp := range c {
 		chirps = append(chirps, chirpMapper(chirp))
-		fmt.Println(chirp)
+	}
+	if sortOrder == "desc" {
+		sort.Slice(chirps, func(i, j int) bool { return chirps[i].CreateAt.After(chirps[j].CreateAt) })
+		fmt.Printf("DESC ordering: %v\n", chirps)
 	}
 
 	data, err := json.Marshal(chirps)

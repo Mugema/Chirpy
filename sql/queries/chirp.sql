@@ -10,6 +10,9 @@ insert into chirp(
 -- name: GetChirps :many
 select * from chirp order by created_at asc ;
 
+-- name: GetChirpByUserId :many
+select * from chirp where user_id = $1 order by created_at asc;
+
 -- name: GetChirpById :one
 select * from chirp where id = $1;
 
