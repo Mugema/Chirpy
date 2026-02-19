@@ -8,5 +8,7 @@ Create table users (
     password text not null
 );
 
+Alter table users add column is_chirpy_red boolean not null ;
+
 -- +goose Down
 Drop table users;

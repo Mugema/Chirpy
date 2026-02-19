@@ -51,3 +51,18 @@ func MakeRefreshToken() (string, error) {
 	fmt.Printf("Created refreshToken for user %v \n", encodedString)
 	return encodedString, nil
 }
+
+func GetAPIKey(headers http.Header) (string, error) {
+	apiKey := headers.Get("Authorization")
+	if apiKey == "" {
+		return "", errors.New("no authorization in header")
+	}
+
+	token := strings.Split(apiKey, " ")
+	if len(token) == 1 {
+		return "", errors.New("no apiKey found")
+	}
+
+	return token[1], nil
+
+}

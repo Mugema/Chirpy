@@ -21,6 +21,7 @@ type apiConfig struct {
 	fileServerHits atomic.Int32
 	db             *database.Queries
 	secret         string
+	polkaKey       string
 }
 
 func main() {
@@ -36,7 +37,7 @@ func main() {
 	server.Addr = ":8080"
 	server.Handler = router
 
-	apiCfg := apiConfig{db: dbQueries, secret: os.Getenv("secret")}
+	apiCfg := apiConfig{db: dbQueries, secret: os.Getenv("secret"), polkaKey: os.Getenv("POLKA_KEY")}
 
 	router.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	router.HandleFunc("GET /api/healthz/", handleHealth)
@@ -51,6 +52,7 @@ func main() {
 	router.HandleFunc("POST /api/revoke", apiCfg.handlerRevoke)
 	router.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)
 	router.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp)
+	router.HandleFunc("POST /api/polka/webhooks", apiCfg.handlerUpgradeUser)
 
 	err := server.ListenAndServe()
 	if err != nil {
@@ -75,6 +77,7 @@ type User struct {
 	CreateAt  time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	ChirpyRed bool      `json:"is_chirpy_red"`
 }
 
 type Chirp struct {
@@ -142,11 +145,12 @@ func (cfg *apiConfig) handlerUsers(writer http.ResponseWriter, req *http.Request
 	user, err := cfg.db.CreateUser(
 		req.Context(),
 		database.CreateUserParams{
-			ID:        uuid.New(),
-			CreatedAt: time.Now().Local(),
-			UpdatedAt: time.Now().Local(),
-			Email:     user1.Email,
-			Password:  hashString})
+			ID:          uuid.New(),
+			CreatedAt:   time.Now().Local(),
+			UpdatedAt:   time.Now().Local(),
+			Email:       user1.Email,
+			Password:    hashString,
+			IsChirpyRed: false})
 
 	if err != nil {
 		fmt.Println("Error creating user")
@@ -173,7 +177,8 @@ func jsonUserMapper(u database.User) User {
 		u.ID,
 		u.CreatedAt,
 		u.UpdatedAt,
-		u.Email}
+		u.Email,
+		u.IsChirpyRed}
 }
 
 func (cfg *apiConfig) handlerGetChirps(writer http.ResponseWriter, req *http.Request) {
